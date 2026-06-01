@@ -1,0 +1,234 @@
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { ChevronLeft, TrendingUp, Activity, Newspaper, Brain } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  holdings as mockHoldings,
+  strategies,
+  formatTWD,
+  formatPct,
+  genCandles,
+} from "@/lib/mock-data";
+import { getHoldings } from "@/lib/storage";
+import { CandleChart, VolumeChart } from "@/components/CandleChart";
+
+export const Route = createFileRoute("/_app/holdings/$symbol")({
+  head: () => ({ meta: [{ title: "股票詳情" }] }),
+  component: DetailPage,
+});
+
+function DetailPage() {
+  const { symbol } = Route.useParams();
+  const router = useRouter();
+  const [holdings, setHoldings] = useState(mockHoldings);
+  const h = holdings.find((x) => x.symbol === symbol);
+  const [range, setRange] = useState<"7" | "30">("30");
+
+  useEffect(() => {
+    setHoldings(getHoldings());
+  }, []);
+
+  if (!h) {
+    return (
+      <div className="px-4 pt-10 text-center">
+        <p className="text-muted-foreground">找不到這檔股票</p>
+        <Link to="/holdings" className="mt-4 inline-block text-primary">
+          回持股清單
+        </Link>
+      </div>
+    );
+  }
+
+  const pnl = (h.price - h.avgCost) * h.shares;
+  const pct = ((h.price - h.avgCost) / h.avgCost) * 100;
+  const todayChange = h.price - h.prevClose;
+  const todayPct = (todayChange / h.prevClose) * 100;
+  const up = todayChange >= 0;
+  const candles = genCandles(h.price, range === "7" ? 7 : 30);
+  const strat = strategies.find((s) => s.symbol === h.symbol);
+
+  return (
+    <div className="space-y-5 pb-6">
+      <header className="sticky top-0 z-10 flex items-center justify-between bg-background/90 px-4 py-3 backdrop-blur">
+        <button
+          onClick={() => router.history.back()}
+          className="flex h-9 w-9 items-center justify-center rounded-full bg-surface"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <div className="text-center">
+          <p className="font-display text-base font-semibold">{h.name}</p>
+          <p className="font-mono text-[11px] text-muted-foreground">
+            {h.symbol} · {h.sector}
+          </p>
+        </div>
+        <div className="w-9" />
+      </header>
+
+      <section className="px-4">
+        <div className="flex items-end gap-3">
+          <p className="font-display text-4xl font-bold tabular">{h.price.toFixed(2)}</p>
+          <p className={`pb-1.5 font-mono text-sm tabular ${up ? "text-profit" : "text-loss"}`}>
+            {todayChange >= 0 ? "+" : ""}
+            {todayChange.toFixed(2)} ({formatPct(todayPct)})
+          </p>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">最後更新 14:30</p>
+      </section>
+
+      <div className="px-4">
+        <div className="inline-flex rounded-xl bg-surface p-1">
+          {(["7", "30"] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                range === r ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+              }`}
+            >
+              近 {r} 日
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <section className="px-4">
+        <div className="rounded-2xl bg-surface p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">K 線圖</h3>
+            <span className="text-[10px] text-muted-foreground">日 K</span>
+          </div>
+          <CandleChart data={candles} />
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-1 text-[11px] text-muted-foreground">成交量（張）</p>
+            <VolumeChart data={candles} />
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Stat label="本益比 (P/E)" value="18.4" />
+          <Stat label="殖利率" value="2.85%" />
+          <Stat label="52週高" value={(h.price * 1.18).toFixed(2)} />
+          <Stat label="52週低" value={(h.price * 0.72).toFixed(2)} />
+        </div>
+      </section>
+
+      <section className="px-4">
+        <h3 className="mb-2 text-sm font-semibold">我的持倉</h3>
+        <div className="rounded-2xl bg-surface p-4">
+          <div className="grid grid-cols-2 gap-y-3">
+            <PosCell label="持有股數" value={`${h.shares}`} />
+            <PosCell label="平均成本" value={h.avgCost.toFixed(2)} />
+            <PosCell label="總市值" value={formatTWD(h.price * h.shares)} />
+            <PosCell
+              label="損益"
+              value={`${formatTWD(pnl, { sign: true })} (${formatPct(pct)})`}
+              className={pnl >= 0 ? "text-profit" : "text-loss"}
+            />
+          </div>
+        </div>
+      </section>
+
+      {strat && (
+        <section className="px-4">
+          <div className="mb-2 flex items-center gap-2">
+            <Brain className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-semibold">AI 策略分析</h3>
+          </div>
+          <div className="space-y-2 rounded-2xl gradient-card p-4">
+            <ActionBadge
+              action={strat.action}
+              confidence={strat.confidence}
+              target={strat.target}
+            />
+            <Reason icon={Activity} label="技術面" text={strat.technical} />
+            <Reason icon={TrendingUp} label="基本面" text={strat.fundamental} />
+            <Reason icon={Newspaper} label="新聞面" text={strat.news} />
+            <div className="mt-2 rounded-xl bg-warning/15 p-3 text-xs">
+              <p className="font-medium text-warning">⚠ 風險提醒</p>
+              <p className="mt-1 text-muted-foreground">{strat.risk}</p>
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-surface p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-display text-base font-semibold tabular">{value}</p>
+    </div>
+  );
+}
+
+function PosCell({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`mt-0.5 font-mono text-sm font-semibold tabular ${className}`}>{value}</p>
+    </div>
+  );
+}
+
+function ActionBadge({
+  action,
+  confidence,
+  target,
+}: {
+  action: "buy" | "hold" | "sell";
+  confidence: number;
+  target: number;
+}) {
+  const map = {
+    buy: { label: "建議買進", cls: "bg-profit/10 text-profit" },
+    hold: { label: "建議觀望", cls: "bg-warning/15 text-warning" },
+    sell: { label: "建議賣出", cls: "bg-loss/10 text-loss" },
+  } as const;
+
+  return (
+    <div className="flex items-center justify-between rounded-xl bg-background/40 p-3">
+      <div>
+        <span className={`rounded-md px-2 py-1 text-xs font-semibold ${map[action].cls}`}>
+          {map[action].label}
+        </span>
+        <p className="mt-2 text-[11px] text-muted-foreground">AI 信心度 {confidence}%</p>
+      </div>
+      <div className="text-right">
+        <p className="text-[11px] text-muted-foreground">目標價</p>
+        <p className="font-mono text-base font-bold tabular text-primary">{target}</p>
+      </div>
+    </div>
+  );
+}
+
+function Reason({
+  icon: Icon,
+  label,
+  text,
+}: {
+  icon: React.ElementType;
+  label: string;
+  text: string;
+}) {
+  return (
+    <div className="flex gap-3 rounded-xl bg-background/30 p-3">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+      <div className="text-xs">
+        <p className="font-semibold">{label}</p>
+        <p className="mt-1 leading-relaxed text-muted-foreground">{text}</p>
+      </div>
+    </div>
+  );
+}
