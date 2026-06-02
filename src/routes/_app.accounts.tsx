@@ -11,6 +11,7 @@ import {
   ReceiptText,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -66,6 +67,7 @@ function AccountsPage() {
   const [showInstallmentForm, setShowInstallmentForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedInstallmentPlanId, setSelectedInstallmentPlanId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const accountTotal = accounts.reduce((sum, account) => sum + account.balance, 0);
@@ -81,6 +83,10 @@ function AccountsPage() {
         .reduce((acc, payment) => acc + payment.amount, 0),
     0,
   );
+  const thisMonthInstallmentDue = getInstallmentDueTotal(installmentPlans, 0);
+  const nextMonthInstallmentDue = getInstallmentDueTotal(installmentPlans, 1);
+  const selectedInstallmentPlan =
+    installmentPlans.find((plan) => plan.id === selectedInstallmentPlanId) ?? null;
 
   const groupedAccounts = ACCOUNT_TYPES.map((type) => ({
     type,
@@ -493,10 +499,23 @@ function AccountsPage() {
 
       {activeTab === "installment" && (
         <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <MiniStat label="本月分期應繳" value={formatTWD(thisMonthInstallmentDue)} />
+            <MiniStat label="下月分期應繳" value={formatTWD(nextMonthInstallmentDue)} />
+            <MiniStat label="剩餘未繳總額" value={formatTWD(totalInstallmentRemaining)} />
+            <MiniStat label="分期方案數量" value={`${installmentPlans.length} 筆`} />
+          </div>
+
           {installmentPlans.length === 0 ? (
             <EmptyState
               title="尚未新增分期項目"
               description="記錄分期方案後，系統會自動計算每期金額與剩餘期數。"
+            />
+          ) : selectedInstallmentPlan ? (
+            <InstallmentPlanDetail
+              plan={selectedInstallmentPlan}
+              onBack={() => setSelectedInstallmentPlanId(null)}
+              onMarkPaid={handleMarkInstallmentPaid}
             />
           ) : (
             installmentPlans.map((plan) => {
@@ -506,9 +525,16 @@ function AccountsPage() {
                 (sum, payment) => sum + payment.amount,
                 0,
               );
+              const nextPayment = remainingPayments[0] ?? null;
+              const isCompleted = remainingPayments.length === 0;
 
               return (
-                <section key={plan.id} className="rounded-2xl bg-surface p-4">
+                <button
+                  key={plan.id}
+                  type="button"
+                  onClick={() => setSelectedInstallmentPlanId(plan.id)}
+                  className="w-full rounded-2xl bg-surface p-4 text-left"
+                >
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center gap-2">
@@ -519,58 +545,25 @@ function AccountsPage() {
                         開始日期 {plan.startDate} · 年利率 {plan.annualInterestRate.toFixed(2)}%
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[11px] text-muted-foreground">每期應繳</p>
-                      <p className="font-mono text-sm font-semibold tabular text-primary">
-                        {formatTWD(plan.monthlyPayment)}
-                      </p>
-                    </div>
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                        isCompleted ? "bg-primary/10 text-primary" : "bg-warning/15 text-warning"
+                      }`}
+                    >
+                      {isCompleted ? "已完成" : "進行中"}
+                    </span>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 gap-3">
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <MiniStat label="總金額" value={formatTWD(plan.totalAmount)} />
+                    <MiniStat label="分期期數" value={`${plan.installmentMonths} 期`} />
                     <MiniStat label="已繳期數" value={`${paidCount} / ${plan.installmentMonths}`} />
                     <MiniStat label="剩餘期數" value={`${remainingPayments.length} 期`} />
-                    <MiniStat label="剩餘金額" value={formatTWD(remainingAmount)} />
+                    <MiniStat label="每月應繳" value={formatTWD(plan.monthlyPayment)} />
+                    <MiniStat label="下一期繳款日" value={nextPayment?.dueDate ?? "無"} />
+                    <MiniStat label="剩餘未繳金額" value={formatTWD(remainingAmount)} />
                   </div>
-
-                  <div className="mt-4 space-y-2">
-                    {plan.payments.map((payment) => (
-                      <div
-                        key={payment.id}
-                        className="flex items-center justify-between rounded-xl bg-background/60 px-3 py-3"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                            <p className="text-sm font-medium">第 {payment.installmentNumber} 期</p>
-                          </div>
-                          <p className="mt-1 text-[11px] text-muted-foreground">
-                            到期 {payment.dueDate} · 本金 {formatTWD(payment.principal)} · 利息{" "}
-                            {formatTWD(payment.interest)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-mono text-sm font-semibold tabular">
-                            {formatTWD(payment.amount)}
-                          </p>
-                          {payment.isPaid ? (
-                            <span className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary">
-                              <CheckCircle2 className="h-3.5 w-3.5" /> 已繳
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleMarkInstallmentPaid(plan.id, payment.id)}
-                              className="mt-1 rounded-lg bg-primary/10 px-2 py-1 text-[11px] text-primary"
-                            >
-                              標記已繳
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                </button>
               );
             })
           )}
@@ -654,6 +647,85 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] text-muted-foreground">{label}</p>
       <p className="mt-1 font-mono text-sm font-semibold tabular">{value}</p>
     </div>
+  );
+}
+
+function InstallmentPlanDetail({
+  plan,
+  onBack,
+  onMarkPaid,
+}: {
+  plan: InstallmentPlan;
+  onBack: () => void;
+  onMarkPaid: (planId: string, paymentId: string) => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-2 rounded-xl bg-surface px-3 py-2 text-sm font-medium"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        返回分期列表
+      </button>
+
+      <div className="rounded-2xl bg-surface p-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <ReceiptText className="h-4 w-4 text-primary" />
+              <p className="text-sm font-semibold">{plan.itemName}</p>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              開始日期 {plan.startDate} · 年利率 {plan.annualInterestRate.toFixed(2)}%
+            </p>
+          </div>
+          <p className="font-mono text-sm font-semibold tabular text-primary">
+            {formatTWD(plan.monthlyPayment)} / 月
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {plan.payments.map((payment) => (
+          <div
+            key={payment.id}
+            className="flex items-center justify-between rounded-xl bg-surface px-3 py-3"
+          >
+            <div>
+              <div className="flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm font-medium">第 {payment.installmentNumber} 期</p>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">繳款日期 {payment.dueDate}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                本金 {formatTWD(payment.principal)} · 利息 {formatTWD(payment.interest)} · 本期應繳{" "}
+                {formatTWD(payment.amount)}
+              </p>
+            </div>
+            <div className="text-right">
+              {payment.isPaid ? (
+                <span className="inline-flex items-center gap-1 text-[11px] text-primary">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> 已繳
+                </span>
+              ) : (
+                <>
+                  <p className="mb-2 text-[11px] text-warning">未繳</p>
+                  <button
+                    type="button"
+                    onClick={() => onMarkPaid(plan.id, payment.id)}
+                    className="rounded-lg bg-primary/10 px-2 py-1 text-[11px] text-primary"
+                  >
+                    標記已繳
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1338,4 +1410,19 @@ function addMonths(dateString: string, monthsToAdd: number) {
 
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function getInstallmentDueTotal(plans: InstallmentPlan[], monthOffset: number) {
+  const target = new Date();
+  target.setMonth(target.getMonth() + monthOffset);
+  const yearMonth = target.toISOString().slice(0, 7);
+
+  return plans.reduce((sum, plan) => {
+    return (
+      sum +
+      plan.payments
+        .filter((payment) => !payment.isPaid && payment.dueDate.startsWith(yearMonth))
+        .reduce((acc, payment) => acc + payment.amount, 0)
+    );
+  }, 0);
 }
