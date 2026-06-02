@@ -1,13 +1,8 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { ChevronLeft, TrendingUp, Activity, Newspaper, Brain } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  holdings as mockHoldings,
-  strategies,
-  formatTWD,
-  formatPct,
-  genCandles,
-} from "@/lib/mock-data";
+import { holdings as mockHoldings, strategies, formatTWD, formatPct } from "@/lib/mock-data";
+import { fetchTaiwanStockHistory, MarketDataError } from "@/lib/marketData";
 import { getHoldings } from "@/lib/storage";
 import { CandleChart, VolumeChart } from "@/components/CandleChart";
 
@@ -22,10 +17,56 @@ function DetailPage() {
   const [holdings, setHoldings] = useState(mockHoldings);
   const h = holdings.find((x) => x.symbol === symbol);
   const [range, setRange] = useState<"7" | "30">("30");
+  const [history, setHistory] = useState<
+    Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>
+  >([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [hasNoHistory, setHasNoHistory] = useState(false);
 
   useEffect(() => {
     setHoldings(getHoldings());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHistory = async () => {
+      setIsLoadingHistory(true);
+      setHistoryError(null);
+      setHasNoHistory(false);
+
+      try {
+        const records = await fetchTaiwanStockHistory(symbol, 30);
+        if (cancelled) return;
+
+        setHistory(records);
+        setHasNoHistory(records.length === 0);
+      } catch (error) {
+        if (cancelled) return;
+
+        if (error instanceof MarketDataError && error.code === "NOT_FOUND") {
+          setHistory([]);
+          setHasNoHistory(true);
+          setHistoryError(null);
+        } else {
+          setHistory([]);
+          setHasNoHistory(false);
+          setHistoryError(error instanceof Error ? error.message : "股價歷史資料載入失敗。");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingHistory(false);
+        }
+      }
+    };
+
+    void loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
 
   if (!h) {
     return (
@@ -40,11 +81,24 @@ function DetailPage() {
 
   const pnl = (h.price - h.avgCost) * h.shares;
   const pct = ((h.price - h.avgCost) / h.avgCost) * 100;
-  const todayChange = h.price - h.prevClose;
-  const todayPct = (todayChange / h.prevClose) * 100;
-  const up = todayChange >= 0;
-  const candles = genCandles(h.price, range === "7" ? 7 : 30);
+  const selectedHistory = history.slice(-(range === "7" ? 7 : 30));
+  const trendStart = selectedHistory.at(0);
+  const trendEnd = selectedHistory.at(-1);
+  const trendChange =
+    trendStart && trendEnd ? trendEnd.close - trendStart.close : h.price - h.prevClose;
+  const trendPct =
+    trendStart && trendStart.close !== 0 ? (trendChange / trendStart.close) * 100 : 0;
+  const up = trendChange >= 0;
+  const candles = selectedHistory.map((item) => ({
+    o: item.open,
+    h: item.high,
+    l: item.low,
+    c: item.close,
+    v: item.volume,
+  }));
   const strat = strategies.find((s) => s.symbol === h.symbol);
+  const latestHistory = history.at(-1);
+  const priceToDisplay = latestHistory?.close ?? h.price;
 
   return (
     <div className="space-y-5 pb-6">
@@ -66,13 +120,15 @@ function DetailPage() {
 
       <section className="px-4">
         <div className="flex items-end gap-3">
-          <p className="font-display text-4xl font-bold tabular">{h.price.toFixed(2)}</p>
+          <p className="font-display text-4xl font-bold tabular">{priceToDisplay.toFixed(2)}</p>
           <p className={`pb-1.5 font-mono text-sm tabular ${up ? "text-profit" : "text-loss"}`}>
-            {todayChange >= 0 ? "+" : ""}
-            {todayChange.toFixed(2)} ({formatPct(todayPct)})
+            {trendChange >= 0 ? "+" : ""}
+            {trendChange.toFixed(2)} ({formatPct(trendPct)})
           </p>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">最後更新 14:30</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {latestHistory ? `最後更新 ${latestHistory.date}` : "最後更新 --"}
+        </p>
       </section>
 
       <div className="px-4">
@@ -97,11 +153,27 @@ function DetailPage() {
             <h3 className="text-sm font-semibold">K 線圖</h3>
             <span className="text-[10px] text-muted-foreground">日 K</span>
           </div>
-          <CandleChart data={candles} />
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="mb-1 text-[11px] text-muted-foreground">成交量（張）</p>
-            <VolumeChart data={candles} />
-          </div>
+          {isLoadingHistory ? (
+            <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
+              載入歷史股價中...
+            </div>
+          ) : historyError ? (
+            <div className="rounded-xl border border-loss/30 bg-loss/10 px-4 py-6 text-center text-sm text-loss">
+              {historyError}
+            </div>
+          ) : hasNoHistory || candles.length === 0 ? (
+            <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-6 text-center text-sm text-warning">
+              查無歷史股價資料
+            </div>
+          ) : (
+            <>
+              <CandleChart data={candles} />
+              <div className="mt-3 border-t border-border pt-3">
+                <p className="mb-1 text-[11px] text-muted-foreground">成交量（股）</p>
+                <VolumeChart data={candles} />
+              </div>
+            </>
+          )}
         </div>
       </section>
 

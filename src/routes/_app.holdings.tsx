@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Search, ArrowUpDown, Plus, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Search, ArrowUpDown, Plus, MoreVertical, Pencil, Trash2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { holdings as mockHoldings, formatTWD, formatPct } from "@/lib/mock-data";
 import {
@@ -7,6 +7,7 @@ import {
   calculateHoldingProfitLoss,
   calculateHoldingReturnRate,
 } from "@/lib/calculations";
+import { fetchTaiwanStockLatestPrice } from "@/lib/marketData";
 import { getHoldings, saveHoldings } from "@/lib/storage";
 import type { Holding } from "@/lib/types";
 
@@ -23,6 +24,7 @@ function HoldingsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Holding | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
   const normalizedQuery = query.trim().toLowerCase();
   const enriched = holdings
@@ -91,6 +93,54 @@ function HoldingsPage() {
     }
   };
 
+  const handleUpdateAllPrices = async () => {
+    if (holdings.length === 0 || isUpdatingPrices) return;
+
+    setIsUpdatingPrices(true);
+    setActionError(null);
+
+    const results = await Promise.allSettled(
+      holdings.map(async (holding) => {
+        const latest = await fetchTaiwanStockLatestPrice(holding.symbol);
+        return {
+          symbol: holding.symbol,
+          nextPrice: latest.close,
+        };
+      }),
+    );
+
+    try {
+      const nextHoldings = holdings.map((holding, index) => {
+        const result = results[index];
+        if (result?.status !== "fulfilled") {
+          return holding;
+        }
+
+        return {
+          ...holding,
+          prevClose: holding.price,
+          price: result.value.nextPrice,
+        };
+      });
+
+      saveHoldings(nextHoldings);
+      setHoldings(nextHoldings);
+
+      const failedSymbols = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        return holdings[index]?.symbol ? [holdings[index].symbol] : [];
+      });
+
+      if (failedSymbols.length > 0) {
+        setActionError(`以下股票更新失敗，已保留原股價：${failedSymbols.join("、")}`);
+      }
+    } catch {
+      setActionError("股價更新失敗，請稍後再試。");
+    } finally {
+      setIsUpdatingPrices(false);
+    }
+  };
+
   return (
     <div className="space-y-4 px-4 pt-6">
       <header className="flex items-start justify-between">
@@ -142,6 +192,15 @@ function HoldingsPage() {
         >
           <ArrowUpDown className="h-3.5 w-3.5" />
           {sort === "value" ? "市值" : sort === "pnl" ? "損益" : "報酬率"}
+        </button>
+        <button
+          type="button"
+          onClick={handleUpdateAllPrices}
+          disabled={isUpdatingPrices || holdings.length === 0}
+          className="flex items-center gap-1 rounded-xl bg-surface px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isUpdatingPrices ? "animate-spin" : ""}`} />
+          {isUpdatingPrices ? "更新中" : "更新股價"}
         </button>
       </div>
 
