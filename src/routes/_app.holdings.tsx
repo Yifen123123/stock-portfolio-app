@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Search, ArrowUpDown, Plus, MoreVertical, Pencil, Trash2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { holdings as mockHoldings, formatTWD, formatPct } from "@/lib/mock-data";
 import {
   calculateHoldingMarketValue,
@@ -72,8 +73,9 @@ function HoldingsPage() {
     try {
       let nextHolding = holding;
       let nextActionError: string | null = null;
+      const isEditing = editing != null;
 
-      if (!editing) {
+      if (!isEditing) {
         try {
           const latest = await fetchTaiwanStockLatestPrice(holding.symbol);
           nextHolding = {
@@ -101,13 +103,14 @@ function HoldingsPage() {
       }
 
       setHoldings((prev) => {
-        const next = editing
+        const next = isEditing
           ? prev.map((item) => (item.symbol === editing.symbol ? nextHolding : item))
           : [...prev, nextHolding];
         saveHoldings(next);
         return next;
       });
       setActionError(nextActionError);
+      toast.success(isEditing ? "持股已更新" : "新增持股成功");
       setShowForm(false);
       setEditing(null);
     } catch {
@@ -369,10 +372,12 @@ function HoldingForm({
     avgCost: initial ? String(initial.avgCost) : "",
     currentPrice: initial ? String(initial.price) : "",
   });
+  const hasCurrentPriceInput = form.currentPrice.trim() !== "";
 
   const shares = Number(form.shares || 0);
   const avgCost = Number(form.avgCost || 0);
   const currentPrice = Number(form.currentPrice || 0);
+  const fallbackPrice = hasCurrentPriceInput ? currentPrice : avgCost;
   const marketValue = shares * currentPrice;
   const costBasis = shares * avgCost;
   const profitLoss = marketValue - costBasis;
@@ -382,6 +387,8 @@ function HoldingForm({
   const handleSubmit = async () => {
     const stockSymbol = normalizeTaiwanStockSymbol(form.stockSymbol);
     const stockName = form.stockName.trim();
+    const sharesInput = form.shares.trim();
+    const avgCostInput = form.avgCost.trim();
 
     if (!stockSymbol) {
       setError("股票代號不可空白。");
@@ -390,6 +397,16 @@ function HoldingForm({
 
     if (!stockName) {
       setError("股票名稱不可空白。");
+      return;
+    }
+
+    if (!sharesInput) {
+      setError("持有股數不可空白。");
+      return;
+    }
+
+    if (!avgCostInput) {
+      setError("平均成本不可空白。");
       return;
     }
 
@@ -427,8 +444,8 @@ function HoldingForm({
         name: stockName,
         shares,
         avgCost,
-        price: currentPrice,
-        prevClose: initial?.prevClose ?? currentPrice,
+        price: fallbackPrice,
+        prevClose: initial?.prevClose ?? fallbackPrice,
         sector: initial?.sector ?? "未分類",
         latestPriceDate: initial?.latestPriceDate ?? null,
         dataSource: initial?.dataSource ?? "Manual",
@@ -440,104 +457,110 @@ function HoldingForm({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm">
-      <div className="mx-auto w-full max-w-md rounded-t-3xl bg-surface-elevated p-5 pb-8">
-        <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-muted" />
-        <h3 className="font-display text-lg font-semibold">{initial ? "編輯持股" : "新增持股"}</h3>
-        <div className="mt-4 space-y-3">
-          {error && (
-            <div className="rounded-xl border border-loss/30 bg-loss/10 px-3 py-2 text-xs text-loss">
-              {error}
-            </div>
-          )}
-          <Field label="股票代號">
-            <input
-              value={form.stockSymbol}
-              onChange={(e) => {
-                setForm({ ...form, stockSymbol: e.target.value });
-                setError(null);
-              }}
-              disabled={initial != null}
-              className="w-full rounded-xl bg-background px-3 py-2.5 text-sm uppercase outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
-              placeholder="例：2330"
-            />
-          </Field>
-          <Field label="股票名稱">
-            <input
-              value={form.stockName}
-              onChange={(e) => {
-                setForm({ ...form, stockName: e.target.value });
-                setError(null);
-              }}
-              className="w-full rounded-xl bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-              placeholder="例：台積電"
-            />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="持有股數">
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm">
+      <div className="mx-auto flex max-h-[calc(100vh-0.75rem)] w-full max-w-md flex-col overflow-hidden rounded-t-3xl bg-surface-elevated shadow-card">
+        <div className="flex-1 overflow-y-auto px-5 pb-6 pt-5">
+          <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-muted" />
+          <h3 className="font-display text-lg font-semibold">
+            {initial ? "編輯持股" : "新增持股"}
+          </h3>
+          <div className="mt-4 space-y-3 pb-6">
+            {error && (
+              <div className="rounded-xl border border-loss/30 bg-loss/10 px-3 py-2 text-xs text-loss">
+                {error}
+              </div>
+            )}
+            <Field label="股票代號">
               <input
-                type="number"
-                min={0}
-                value={form.shares}
+                value={form.stockSymbol}
                 onChange={(e) => {
-                  setForm({ ...form, shares: e.target.value });
+                  setForm({ ...form, stockSymbol: e.target.value });
                   setError(null);
                 }}
-                className="w-full rounded-xl bg-background px-3 py-2.5 font-mono text-sm outline-none focus:ring-2 focus:ring-primary"
+                disabled={initial != null}
+                className="w-full rounded-xl bg-background px-3 py-2.5 text-sm uppercase outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                placeholder="例：2330"
               />
             </Field>
-            <Field label="平均成本">
+            <Field label="股票名稱">
+              <input
+                value={form.stockName}
+                onChange={(e) => {
+                  setForm({ ...form, stockName: e.target.value });
+                  setError(null);
+                }}
+                className="w-full rounded-xl bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+                placeholder="例：台積電"
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="持有股數">
+                <input
+                  type="number"
+                  min={0}
+                  value={form.shares}
+                  onChange={(e) => {
+                    setForm({ ...form, shares: e.target.value });
+                    setError(null);
+                  }}
+                  className="w-full rounded-xl bg-background px-3 py-2.5 font-mono text-sm outline-none focus:ring-2 focus:ring-primary"
+                />
+              </Field>
+              <Field label="平均成本">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.avgCost}
+                  onChange={(e) => {
+                    setForm({ ...form, avgCost: e.target.value });
+                    setError(null);
+                  }}
+                  className="w-full rounded-xl bg-background px-3 py-2.5 font-mono text-sm outline-none focus:ring-2 focus:ring-primary"
+                />
+              </Field>
+            </div>
+            <Field label="目前價格">
               <input
                 type="number"
                 min={0}
                 step="0.01"
-                value={form.avgCost}
+                value={form.currentPrice}
                 onChange={(e) => {
-                  setForm({ ...form, avgCost: e.target.value });
+                  setForm({ ...form, currentPrice: e.target.value });
                   setError(null);
                 }}
                 className="w-full rounded-xl bg-background px-3 py-2.5 font-mono text-sm outline-none focus:ring-2 focus:ring-primary"
               />
             </Field>
+            {!initial && (
+              <p className="text-[11px] text-muted-foreground">
+                儲存後會先嘗試從 FinMind 取得最新股價；若失敗，會先使用你手動輸入的價格。
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-3 rounded-2xl bg-background/60 p-3 text-xs">
+              <SummaryCell label="市值" value={formatTWD(marketValue)} />
+              <SummaryCell label="成本" value={formatTWD(costBasis)} />
+              <SummaryCell
+                label="損益"
+                value={formatTWD(profitLoss, { sign: true })}
+                className={stockColor.textClass}
+              />
+              <SummaryCell
+                label="報酬率"
+                value={formatPct(returnRate)}
+                className={stockColor.textClass}
+              />
+            </div>
           </div>
-          <Field label="目前價格">
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={form.currentPrice}
-              onChange={(e) => {
-                setForm({ ...form, currentPrice: e.target.value });
-                setError(null);
-              }}
-              className="w-full rounded-xl bg-background px-3 py-2.5 font-mono text-sm outline-none focus:ring-2 focus:ring-primary"
-            />
-          </Field>
-          {!initial && (
-            <p className="text-[11px] text-muted-foreground">
-              儲存後會先嘗試從 FinMind 取得最新股價；若失敗，會先使用你手動輸入的價格。
-            </p>
-          )}
-          <div className="grid grid-cols-2 gap-3 rounded-2xl bg-background/60 p-3 text-xs">
-            <SummaryCell label="市值" value={formatTWD(marketValue)} />
-            <SummaryCell label="成本" value={formatTWD(costBasis)} />
-            <SummaryCell
-              label="損益"
-              value={formatTWD(profitLoss, { sign: true })}
-              className={stockColor.textClass}
-            />
-            <SummaryCell
-              label="報酬率"
-              value={formatPct(returnRate)}
-              className={stockColor.textClass}
-            />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+        </div>
+        <div className="border-t border-border bg-surface-elevated px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-4">
+          <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={onCancel}
               disabled={isSubmitting}
-              className="rounded-xl bg-background py-3 text-sm font-medium"
+              className="rounded-xl bg-background py-3 text-sm font-medium disabled:opacity-60"
             >
               取消
             </button>
@@ -545,9 +568,9 @@ function HoldingForm({
               type="button"
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="rounded-xl gradient-primary py-3 text-sm font-semibold text-primary-foreground"
+              className="rounded-xl gradient-primary py-3 text-sm font-semibold text-primary-foreground disabled:opacity-60"
             >
-              {isSubmitting ? "儲存中" : "儲存"}
+              {isSubmitting ? "新增中" : initial ? "儲存修改" : "新增持股"}
             </button>
           </div>
         </div>
