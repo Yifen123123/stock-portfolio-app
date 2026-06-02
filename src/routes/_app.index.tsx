@@ -10,6 +10,9 @@ import {
   Wallet,
   Landmark,
   Coins,
+  CreditCard,
+  Layers3,
+  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -20,13 +23,18 @@ import {
   genSeries,
 } from "@/lib/mock-data";
 import {
+  calculateAssetAllocation,
   calculateHoldingProfitLoss,
   calculateHoldingReturnRate,
+  calculateLiabilitySummary,
+  calculateNetAssetSummary,
   calculatePortfolioSummary,
 } from "@/lib/calculations";
 import { getTaiwanStockColor } from "@/lib/stockColor";
 import { getAccounts, getHoldings } from "@/lib/storage";
+import { getCreditCardTransactions, getInstallmentPlans } from "@/lib/creditCardStorage";
 import { Sparkline } from "@/components/Sparkline";
+import type { CreditCardTransaction, InstallmentPlan } from "@/lib/creditCardTypes";
 
 export const Route = createFileRoute("/_app/")({
   head: () => ({ meta: [{ title: "資產總覽 — Fortune" }] }),
@@ -37,18 +45,30 @@ function Overview() {
   const [hide, setHide] = useState(false);
   const [accounts, setAccounts] = useState(mockAccounts);
   const [holdings, setHoldings] = useState(mockHoldings);
+  const [creditCardTransactions, setCreditCardTransactions] = useState<CreditCardTransaction[]>([]);
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlan[]>([]);
   const t = calculatePortfolioSummary(accounts, holdings);
+  const netAssetSummary = calculateNetAssetSummary(
+    accounts,
+    holdings,
+    creditCardTransactions,
+    installmentPlans,
+  );
+  const liabilitySummary = calculateLiabilitySummary(creditCardTransactions, installmentPlans);
+  const assetAllocation = calculateAssetAllocation(accounts, holdings);
   const todayPct =
     t.stockValue - t.todayPnL === 0 ? 0 : (t.todayPnL / (t.stockValue - t.todayPnL)) * 100;
   const totalPct = t.cost === 0 ? 0 : (t.totalPnL / t.cost) * 100;
   const financialAccountBalance = t.bankBalance + t.brokerCash;
   const cashRemaining = t.cash;
-  const compositionTotal = t.total === 0 ? 1 : t.total;
+  const compositionTotal = netAssetSummary.totalAssets === 0 ? 1 : netAssetSummary.totalAssets;
   const series = genSeries(t.total, 30, 0.012);
 
   useEffect(() => {
     setAccounts(getAccounts());
     setHoldings(getHoldings());
+    setCreditCardTransactions(getCreditCardTransactions());
+    setInstallmentPlans(getInstallmentPlans());
   }, []);
 
   const fmt = (n: number, sign = false) => (hide ? "NT$ ••••••" : formatTWD(n, { sign }));
@@ -61,10 +81,10 @@ function Overview() {
   ];
 
   return (
-    <div className="space-y-5 px-4 pt-6">
+    <div className="space-y-5 px-4 pb-28 pt-6">
       <header className="flex items-center justify-between">
         <div>
-          <p className="text-xs text-muted-foreground">早安，投資人</p>
+          <p className="text-xs text-muted-foreground">早安，老大</p>
           <h1 className="font-display text-xl font-semibold">投資組合</h1>
         </div>
         <button className="flex h-10 w-10 items-center justify-center rounded-full bg-surface">
@@ -111,6 +131,39 @@ function Overview() {
           </div>
         ))}
       </div>
+
+      <section className="rounded-2xl bg-surface p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="font-display text-base font-semibold">淨資產</h2>
+            <p className="mt-1 text-xs text-muted-foreground">總資產扣除信用卡與分期負債後的餘額</p>
+          </div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10">
+            <ShieldCheck className="h-4.5 w-4.5 text-primary" />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <NetStat
+            label="總資產"
+            value={netAssetSummary.totalAssets}
+            className="text-foreground"
+            hide={hide}
+          />
+          <NetStat
+            label="總負債"
+            value={netAssetSummary.totalLiabilities}
+            className="text-warning"
+            hide={hide}
+          />
+          <NetStat
+            label="淨資產"
+            value={netAssetSummary.netAssets}
+            className="text-primary"
+            hide={hide}
+          />
+        </div>
+      </section>
 
       {/* Top holdings */}
       <section>
@@ -196,6 +249,53 @@ function Overview() {
           </div>
         </div>
       </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-display text-base font-semibold">資產配置</h2>
+          <span className="text-xs text-muted-foreground">依總資產比例</span>
+        </div>
+        <div className="rounded-2xl bg-surface p-4">
+          <div className="space-y-4">
+            {assetAllocation.map((item) => (
+              <AllocationRow
+                key={item.key}
+                label={item.label}
+                amount={item.amount}
+                ratio={item.ratio}
+                hidden={hide}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-display text-base font-semibold">負債摘要</h2>
+          <span className="text-xs text-muted-foreground">本月應繳與剩餘負債</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <DebtCard
+            label="信用卡未繳總額"
+            value={liabilitySummary.creditCardOutstanding}
+            icon={CreditCard}
+            hide={hide}
+          />
+          <DebtCard
+            label="分期剩餘總額"
+            value={liabilitySummary.installmentRemaining}
+            icon={Layers3}
+            hide={hide}
+          />
+          <DebtCard
+            label="本月預計應繳金額"
+            value={liabilitySummary.thisMonthDue}
+            icon={Wallet}
+            hide={hide}
+          />
+        </div>
+      </section>
     </div>
   );
 }
@@ -238,6 +338,85 @@ function Legend({ color, label, pct }: { color: string; label: string; pct: numb
       <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
       <span className="text-muted-foreground">{label}</span>
       <span className="ml-auto pr-3 tabular text-foreground">{pct.toFixed(1)}%</span>
+    </div>
+  );
+}
+
+function NetStat({
+  label,
+  value,
+  className,
+  hide,
+}: {
+  label: string;
+  value: number;
+  className: string;
+  hide: boolean;
+}) {
+  return (
+    <div className="rounded-2xl bg-background/40 p-3">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className={`mt-2 font-mono text-sm font-bold tabular ${className}`}>
+        {hide ? "NT$ ••••••" : formatTWD(value)}
+      </p>
+    </div>
+  );
+}
+
+function AllocationRow({
+  label,
+  amount,
+  ratio,
+  hidden,
+}: {
+  label: string;
+  amount: number;
+  ratio: number;
+  hidden: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">{label}</p>
+          <p className="mt-1 font-mono text-xs tabular text-muted-foreground">
+            {hidden ? "NT$ ••••••" : formatTWD(amount)}
+          </p>
+        </div>
+        <p className="font-mono text-sm font-semibold tabular text-foreground">
+          {(ratio * 100).toFixed(1)}%
+        </p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-background">
+        <div
+          className="h-full rounded-full bg-primary"
+          style={{ width: `${Math.max(ratio * 100, amount > 0 ? 4 : 0)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DebtCard({
+  label,
+  value,
+  icon: Icon,
+  hide,
+}: {
+  label: string;
+  value: number;
+  icon: React.ElementType;
+  hide: boolean;
+}) {
+  return (
+    <div className="rounded-2xl bg-surface p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <Icon className="h-4 w-4 text-warning" />
+      </div>
+      <p className="mt-2 font-display text-lg font-semibold tabular text-warning">
+        {hide ? "NT$ ••••••" : formatTWD(value)}
+      </p>
     </div>
   );
 }

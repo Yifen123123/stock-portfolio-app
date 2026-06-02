@@ -1,4 +1,12 @@
-import type { Account, Holding, PortfolioSummary } from "./types";
+import type { CreditCardTransaction, InstallmentPlan } from "./creditCardTypes";
+import type {
+  Account,
+  AssetAllocationItem,
+  Holding,
+  LiabilitySummary,
+  NetAssetSummary,
+  PortfolioSummary,
+} from "./types";
 
 export const calculateHoldingMarketValue = (holding: Holding) => holding.price * holding.shares;
 
@@ -54,4 +62,133 @@ export const calculatePortfolioSummary = (
     totalPnL,
     cost,
   };
+};
+
+const ETF_SYMBOLS = new Set(["0050", "00878", "00919", "00713"]);
+
+const getHoldingAssetBucket = (holding: Holding) => {
+  if (holding.symbol.toUpperCase().includes("B")) return "bond_etf" as const;
+  if (ETF_SYMBOLS.has(holding.symbol.toUpperCase())) return "etf" as const;
+  return "stock" as const;
+};
+
+export const calculateCreditCardOutstanding = (transactions: CreditCardTransaction[]) =>
+  transactions
+    .filter((transaction) => !transaction.isPaid)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+export const calculateInstallmentRemaining = (plans: InstallmentPlan[]) =>
+  plans.reduce(
+    (sum, plan) =>
+      sum +
+      plan.payments
+        .filter((payment) => !payment.isPaid)
+        .reduce((acc, payment) => acc + payment.amount, 0),
+    0,
+  );
+
+export const calculateThisMonthInstallmentDue = (
+  plans: InstallmentPlan[],
+  baseDate = new Date(),
+) => {
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+
+  return plans.reduce((sum, plan) => {
+    return (
+      sum +
+      plan.payments
+        .filter((payment) => {
+          if (payment.isPaid) return false;
+          const dueDate = new Date(payment.dueDate);
+          return dueDate.getFullYear() === year && dueDate.getMonth() === month;
+        })
+        .reduce((acc, payment) => acc + payment.amount, 0)
+    );
+  }, 0);
+};
+
+export const calculateLiabilitySummary = (
+  creditCardTransactions: CreditCardTransaction[],
+  installmentPlans: InstallmentPlan[],
+): LiabilitySummary => {
+  const creditCardOutstanding = calculateCreditCardOutstanding(creditCardTransactions);
+  const installmentRemaining = calculateInstallmentRemaining(installmentPlans);
+  const thisMonthInstallmentDue = calculateThisMonthInstallmentDue(installmentPlans);
+
+  return {
+    creditCardOutstanding,
+    installmentRemaining,
+    thisMonthDue: creditCardOutstanding + thisMonthInstallmentDue,
+    totalLiabilities: creditCardOutstanding + installmentRemaining,
+  };
+};
+
+export const calculateNetAssetSummary = (
+  accounts: Account[],
+  holdings: Holding[],
+  creditCardTransactions: CreditCardTransaction[],
+  installmentPlans: InstallmentPlan[],
+): NetAssetSummary => {
+  const portfolio = calculatePortfolioSummary(accounts, holdings);
+  const liabilities = calculateLiabilitySummary(creditCardTransactions, installmentPlans);
+
+  return {
+    totalAssets: portfolio.total,
+    totalLiabilities: liabilities.totalLiabilities,
+    netAssets: portfolio.total - liabilities.totalLiabilities,
+  };
+};
+
+export const calculateAssetAllocation = (
+  accounts: Account[],
+  holdings: Holding[],
+): AssetAllocationItem[] => {
+  const stockBuckets = holdings.reduce(
+    (acc, holding) => {
+      const amount = calculateHoldingMarketValue(holding);
+      const bucket = getHoldingAssetBucket(holding);
+      acc[bucket] += amount;
+      return acc;
+    },
+    { stock: 0, etf: 0, bond_etf: 0 },
+  );
+
+  const cashAmount = accounts
+    .filter((account) => account.type === "cash")
+    .reduce((sum, account) => sum + account.balance, 0);
+  const financialAccountAmount = accounts
+    .filter((account) => account.type !== "cash")
+    .reduce((sum, account) => sum + account.balance, 0);
+
+  const totalAssets =
+    stockBuckets.stock +
+    stockBuckets.etf +
+    stockBuckets.bond_etf +
+    cashAmount +
+    financialAccountAmount;
+  const safeTotal = totalAssets === 0 ? 1 : totalAssets;
+
+  return [
+    {
+      key: "stock",
+      label: "股票",
+      amount: stockBuckets.stock,
+      ratio: stockBuckets.stock / safeTotal,
+    },
+    { key: "etf", label: "ETF", amount: stockBuckets.etf, ratio: stockBuckets.etf / safeTotal },
+    {
+      key: "bond_etf",
+      label: "債券 ETF",
+      amount: stockBuckets.bond_etf,
+      ratio: stockBuckets.bond_etf / safeTotal,
+    },
+    { key: "cash", label: "現金", amount: cashAmount, ratio: cashAmount / safeTotal },
+    {
+      key: "financial_account",
+      label: "金融帳戶",
+      amount: financialAccountAmount,
+      ratio: financialAccountAmount / safeTotal,
+    },
+  ];
 };

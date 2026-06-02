@@ -82,3 +82,25 @@ export type PortfolioSummary = {
   totalPnL: number;
   cost: number;
 };
+
+export type AssetAllocationCategory = "stock" | "etf" | "bond_etf" | "cash" | "financial_account";
+
+export type AssetAllocationItem = {
+  key: AssetAllocationCategory;
+  label: string;
+  amount: number;
+  ratio: number;
+};
+
+export type LiabilitySummary = {
+  creditCardOutstanding: number;
+  installmentRemaining: number;
+  thisMonthDue: number;
+  totalLiabilities: number;
+};
+
+export type NetAssetSummary = {
+  totalAssets: number;
+  totalLiabilities: number;
+  netAssets: number;
+};
